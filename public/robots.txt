@@ -1,0 +1,11 @@
+# ReelSaver Robots.txt
+# https://reelsaver.netlify.app
+
+User-agent: *
+Allow: /
+
+# Sitemaps
+Sitemap: https://reelsaver.netlify.app/sitemap.xml
+
+# Crawl delay (optional, helps with server load)
+Crawl-delay: 1
