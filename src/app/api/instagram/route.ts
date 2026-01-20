@@ -1,10 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const USER_AGENTS = {
-    mobile: 'Instagram 275.0.0.27.98 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 458229237)',
-    desktop: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-};
-
 export async function POST(request: NextRequest) {
     try {
         const { url } = await request.json();
@@ -24,54 +19,173 @@ export async function POST(request: NextRequest) {
         const shortcode = shortcodeMatch[2];
         const postType = shortcodeMatch[1];
 
-        // Try multiple extraction methods
+        // Try multiple free methods
         let result = null;
 
-        // Method 1: Instagram GraphQL API (most reliable)
-        result = await tryGraphQLAPI(shortcode);
+        // Method 1: SSS Instagram API (Free, no key)
+        result = await trySSSInsta(cleanUrl);
         if (result) return successResponse(result, shortcode, postType);
 
-        // Method 2: Instagram's public feed API
-        result = await tryPublicAPI(shortcode);
+        // Method 2: SnapSave API (Free, no key)
+        result = await trySnapSave(cleanUrl);
         if (result) return successResponse(result, shortcode, postType);
 
-        // Method 3: Embed page parsing
-        result = await tryEmbedExtraction(shortcode);
+        // Method 3: iGram API (Free, no key)
+        result = await tryIGram(cleanUrl);
         if (result) return successResponse(result, shortcode, postType);
 
-        // Method 4: Use external service as last resort
-        result = await tryExternalService(cleanUrl);
+        // Method 4: Embed extraction as last resort
+        result = await tryEmbedMethod(shortcode);
         if (result) return successResponse(result, shortcode, postType);
 
         // All methods failed
         return NextResponse.json({
-            error: 'Could not extract video. Instagram may have restricted access to this content.',
-            suggestion: 'Try a different reel or make sure the account is public.',
+            error: 'Unable to download this video right now. Instagram may be blocking access.',
+            tip: 'Please try again in a few minutes or try a different post.',
         }, { status: 404 });
 
     } catch (error) {
-        console.error('Instagram API error:', error);
+        console.error('API error:', error);
         return NextResponse.json({
-            error: 'Server error while processing request. Please try again.',
+            error: 'Server error. Please try again.',
         }, { status: 500 });
     }
 }
 
-async function tryGraphQLAPI(shortcode: string): Promise<any> {
+// Method 1: SSS Instagram API (used by sssinstagram.com)
+async function trySSSInsta(url: string): Promise<any> {
     try {
-        // Instagram GraphQL endpoint
-        const graphqlUrl = `https://www.instagram.com/api/v1/media/${shortcode}/info/`;
+        const formData = new URLSearchParams();
+        formData.append('url', url);
+        formData.append('locale', 'en');
 
-        const response = await fetch(graphqlUrl, {
+        const response = await fetch('https://sssinstagram.com/api/instagram', {
+            method: 'POST',
             headers: {
-                'User-Agent': USER_AGENTS.mobile,
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Origin': 'https://sssinstagram.com',
+                'Referer': 'https://sssinstagram.com/',
+            },
+            body: formData.toString(),
+        });
+
+        if (!response.ok) return null;
+
+        const data = await response.json();
+
+        if (data.items && data.items.length > 0) {
+            const item = data.items[0];
+            const video = item.urls?.find((u: any) => u.type === 'video') || item.urls?.[0];
+
+            if (video?.url) {
+                return {
+                    videoUrl: video.url,
+                    thumbnailUrl: item.thumb || item.thumbnail,
+                    isVideo: video.type === 'video',
+                };
+            }
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+// Method 2: SnapSave API
+async function trySnapSave(url: string): Promise<any> {
+    try {
+        const formData = new URLSearchParams();
+        formData.append('url', url);
+
+        const response = await fetch('https://snapsave.app/action.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Origin': 'https://snapsave.app',
+                'Referer': 'https://snapsave.app/',
+            },
+            body: formData.toString(),
+        });
+
+        if (!response.ok) return null;
+
+        const text = await response.text();
+
+        // Parse the HTML response for video URLs
+        const urlMatches = text.match(/https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*/gi);
+        if (urlMatches && urlMatches.length > 0) {
+            return {
+                videoUrl: urlMatches[0].replace(/\\/g, ''),
+                thumbnailUrl: null,
+                isVideo: true,
+            };
+        }
+
+        // Try to find any download URL
+        const downloadMatch = text.match(/href="(https?:\/\/[^"]+)"/);
+        if (downloadMatch) {
+            return {
+                videoUrl: downloadMatch[1],
+                thumbnailUrl: null,
+                isVideo: true,
+            };
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+// Method 3: iGram API
+async function tryIGram(url: string): Promise<any> {
+    try {
+        const formData = new URLSearchParams();
+        formData.append('url', url);
+
+        const response = await fetch('https://api.igram.world/api/convert', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Origin': 'https://igram.world',
+                'Referer': 'https://igram.world/',
+            },
+            body: formData.toString(),
+        });
+
+        if (!response.ok) return null;
+
+        const data = await response.json();
+
+        if (data.results && data.results.length > 0) {
+            const video = data.results.find((r: any) => r.type === 'video') || data.results[0];
+            if (video?.url) {
+                return {
+                    videoUrl: video.url,
+                    thumbnailUrl: video.thumbnail,
+                    isVideo: video.type === 'video',
+                };
+            }
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+// Method 4: Embed extraction (last resort)
+async function tryEmbedMethod(shortcode: string): Promise<any> {
+    try {
+        // Try the JSON API endpoint
+        const apiUrl = `https://www.instagram.com/api/v1/media/${shortcode}/info/`;
+
+        const response = await fetch(apiUrl, {
+            headers: {
+                'User-Agent': 'Instagram 275.0.0.27.98 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100)',
                 'Accept': '*/*',
-                'Accept-Language': 'en-US,en;q=0.9',
                 'X-IG-App-ID': '936619743392459',
-                'X-ASBD-ID': '198387',
-                'X-IG-WWW-Claim': '0',
-                'Origin': 'https://www.instagram.com',
-                'Referer': 'https://www.instagram.com/',
             },
         });
 
@@ -80,153 +194,15 @@ async function tryGraphQLAPI(shortcode: string): Promise<any> {
         const data = await response.json();
         const item = data.items?.[0];
 
-        if (!item) return null;
-
-        // Extract video URL
-        let videoUrl = null;
-        let thumbnailUrl = null;
-
-        if (item.video_versions) {
-            // It's a video/reel
-            videoUrl = item.video_versions[0]?.url;
-            thumbnailUrl = item.image_versions2?.candidates?.[0]?.url;
-        } else if (item.carousel_media) {
-            // Carousel - get first video
-            const video = item.carousel_media.find((m: any) => m.video_versions);
-            if (video) {
-                videoUrl = video.video_versions[0]?.url;
-                thumbnailUrl = video.image_versions2?.candidates?.[0]?.url;
-            } else {
-                // No video in carousel, get first image
-                thumbnailUrl = item.carousel_media[0]?.image_versions2?.candidates?.[0]?.url;
-                videoUrl = thumbnailUrl;
-                return { videoUrl, thumbnailUrl, isVideo: false };
-            }
-        } else if (item.image_versions2) {
-            // It's an image
-            thumbnailUrl = item.image_versions2.candidates?.[0]?.url;
-            videoUrl = thumbnailUrl;
-            return { videoUrl, thumbnailUrl, isVideo: false };
+        if (item?.video_versions?.[0]?.url) {
+            return {
+                videoUrl: item.video_versions[0].url,
+                thumbnailUrl: item.image_versions2?.candidates?.[0]?.url,
+                isVideo: true,
+            };
         }
-
-        if (!videoUrl) return null;
-
-        return { videoUrl, thumbnailUrl, isVideo: true };
-    } catch (e) {
-        console.error('GraphQL method failed:', e);
         return null;
-    }
-}
-
-async function tryPublicAPI(shortcode: string): Promise<any> {
-    try {
-        // Try the public JSON endpoint
-        const url = `https://www.instagram.com/p/${shortcode}/?__a=1&__d=dis`;
-
-        const response = await fetch(url, {
-            headers: {
-                'User-Agent': USER_AGENTS.mobile,
-                'Accept': 'application/json',
-                'X-IG-App-ID': '936619743392459',
-            },
-        });
-
-        if (!response.ok) return null;
-
-        const data = await response.json();
-        const media = data.graphql?.shortcode_media || data.items?.[0];
-
-        if (!media) return null;
-
-        const videoUrl = media.video_url || media.video_versions?.[0]?.url;
-        const thumbnailUrl = media.display_url || media.thumbnail_url;
-
-        if (!videoUrl && !thumbnailUrl) return null;
-
-        return {
-            videoUrl: videoUrl || thumbnailUrl,
-            thumbnailUrl,
-            isVideo: !!videoUrl,
-        };
-    } catch (e) {
-        console.error('Public API method failed:', e);
-        return null;
-    }
-}
-
-async function tryEmbedExtraction(shortcode: string): Promise<any> {
-    try {
-        const embedUrl = `https://www.instagram.com/p/${shortcode}/embed/captioned/`;
-
-        const response = await fetch(embedUrl, {
-            headers: {
-                'User-Agent': USER_AGENTS.desktop,
-                'Accept': 'text/html',
-            },
-        });
-
-        if (!response.ok) return null;
-
-        const html = await response.text();
-
-        // Try to find video URL in various patterns
-        const patterns = [
-            /"video_url":"([^"]+)"/,
-            /video_url\\?":\\?"([^"\\]+)/,
-            /src="([^"]*\.mp4[^"]*)"/i,
-            /data-video-url="([^"]+)"/,
-        ];
-
-        let videoUrl = null;
-        for (const pattern of patterns) {
-            const match = html.match(pattern);
-            if (match) {
-                videoUrl = match[1]
-                    .replace(/\\u0026/g, '&')
-                    .replace(/\\/g, '')
-                    .replace(/&amp;/g, '&');
-                break;
-            }
-        }
-
-        // Get thumbnail
-        const thumbMatch = html.match(/property="og:image"[^>]*content="([^"]+)"/);
-        const thumbnailUrl = thumbMatch ? thumbMatch[1] : null;
-
-        if (!videoUrl) return null;
-
-        return { videoUrl, thumbnailUrl, isVideo: true };
-    } catch (e) {
-        console.error('Embed extraction failed:', e);
-        return null;
-    }
-}
-
-async function tryExternalService(url: string): Promise<any> {
-    try {
-        // Try RapidSave API (free)
-        const apiUrl = `https://api.rapidsave.com/ig?url=${encodeURIComponent(url)}`;
-
-        const response = await fetch(apiUrl, {
-            headers: {
-                'Accept': 'application/json',
-            },
-        });
-
-        if (!response.ok) return null;
-
-        const data = await response.json();
-
-        if (data.error) return null;
-
-        const videoUrl = data.video_url || data.url;
-        const thumbnailUrl = data.thumbnail_url || data.thumbnail;
-
-        if (!videoUrl) return null;
-
-        return { videoUrl, thumbnailUrl, isVideo: true };
-    } catch (e) {
-        console.error('External service failed:', e);
+    } catch {
         return null;
     }
 }
