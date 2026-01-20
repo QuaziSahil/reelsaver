@@ -2,21 +2,22 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Download, Link as LinkIcon, Loader2, AlertCircle, CheckCircle2, Copy, ExternalLink } from "lucide-react";
+import { Download, Link as LinkIcon, Loader2, AlertCircle, CheckCircle2, Image as ImageIcon, Video } from "lucide-react";
 
-interface DownloadOption {
-    url: string;
-    quality: string;
+interface MediaData {
+    videoUrl: string;
+    thumbnailUrl: string | null;
+    shortcode: string;
     type: string;
+    isVideo: boolean;
 }
 
 export default function DownloadForm() {
     const [url, setUrl] = useState("");
     const [loading, setLoading] = useState(false);
+    const [downloading, setDownloading] = useState(false);
     const [error, setError] = useState("");
-    const [downloadReady, setDownloadReady] = useState(false);
-    const [copied, setCopied] = useState(false);
-    const [downloadUrl, setDownloadUrl] = useState("");
+    const [mediaData, setMediaData] = useState<MediaData | null>(null);
 
     const isValidInstagramUrl = (url: string): boolean => {
         const patterns = [
@@ -33,7 +34,7 @@ export default function DownloadForm() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError("");
-        setDownloadReady(false);
+        setMediaData(null);
 
         const trimmedUrl = url.trim();
         if (!trimmedUrl) {
@@ -48,34 +49,67 @@ export default function DownloadForm() {
 
         setLoading(true);
 
-        // Simulate quick processing
-        await new Promise(resolve => setTimeout(resolve, 500));
+        try {
+            const response = await fetch('/api/instagram', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ url: trimmedUrl }),
+            });
 
-        // Create download URL using SnapInsta (reliable free service)
-        const encodedUrl = encodeURIComponent(trimmedUrl);
-        const snapInstaUrl = `https://snapinsta.app/download?url=${encodedUrl}`;
+            const result = await response.json();
 
-        setDownloadUrl(snapInstaUrl);
-        setDownloadReady(true);
-        setLoading(false);
+            if (!response.ok) {
+                throw new Error(result.error || 'Failed to fetch media');
+            }
+
+            if (result.success && result.data) {
+                setMediaData(result.data);
+            } else {
+                throw new Error('No media found in response');
+            }
+        } catch (err) {
+            console.error('Fetch error:', err);
+            setError(err instanceof Error ? err.message : 'Failed to fetch media. Please try again.');
+        } finally {
+            setLoading(false);
+        }
     };
 
-    const handleDownload = () => {
-        // Use SnapInsta - a reliable free Instagram downloader
-        const encodedUrl = encodeURIComponent(url.trim());
-        window.open(`https://snapinsta.app/download?url=${encodedUrl}`, '_blank', 'noopener,noreferrer');
-    };
+    const handleDownload = async () => {
+        if (!mediaData?.videoUrl) return;
 
-    const handleAlternativeDownload = () => {
-        // Alternative: Use FastDL
-        const encodedUrl = encodeURIComponent(url.trim());
-        window.open(`https://fastdl.app/en/?url=${encodedUrl}`, '_blank', 'noopener,noreferrer');
-    };
+        setDownloading(true);
 
-    const copyToClipboard = async () => {
-        await navigator.clipboard.writeText(url);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
+        try {
+            // Fetch the video as a blob
+            const response = await fetch(mediaData.videoUrl);
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch media');
+            }
+
+            const blob = await response.blob();
+            const blobUrl = window.URL.createObjectURL(blob);
+
+            // Create download link
+            const a = document.createElement('a');
+            a.href = blobUrl;
+            a.download = `reelsaver_${mediaData.shortcode}_${Date.now()}.${mediaData.isVideo ? 'mp4' : 'jpg'}`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+
+            // Cleanup
+            window.URL.revokeObjectURL(blobUrl);
+        } catch (err) {
+            console.error('Download error:', err);
+            // Fallback: Open in new tab
+            window.open(mediaData.videoUrl, '_blank');
+        } finally {
+            setDownloading(false);
+        }
     };
 
     return (
@@ -105,7 +139,7 @@ export default function DownloadForm() {
                             {loading ? (
                                 <>
                                     <Loader2 className="w-5 h-5 animate-spin" />
-                                    <span className="hidden sm:inline">Processing...</span>
+                                    <span className="hidden sm:inline">Fetching...</span>
                                 </>
                             ) : (
                                 <>
@@ -141,9 +175,9 @@ export default function DownloadForm() {
                 )}
             </AnimatePresence>
 
-            {/* Download Options */}
+            {/* Media Preview & Download */}
             <AnimatePresence>
-                {downloadReady && (
+                {mediaData && (
                     <motion.div
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
@@ -152,61 +186,69 @@ export default function DownloadForm() {
                     >
                         <div className="flex items-center gap-2 mb-4">
                             <CheckCircle2 className="w-5 h-5 text-green-400" />
-                            <span className="text-green-400 font-medium">Ready to download!</span>
+                            <span className="text-green-400 font-medium">
+                                {mediaData.isVideo ? 'Video' : 'Image'} found!
+                            </span>
                         </div>
 
-                        {/* Preview Card */}
-                        <div className="mb-4 rounded-xl overflow-hidden bg-gray-800/50 p-4">
-                            <div className="flex items-center gap-3">
-                                <div className="w-14 h-14 rounded-lg bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 flex items-center justify-center flex-shrink-0">
-                                    <Download className="w-7 h-7 text-white" />
-                                </div>
-                                <div className="min-w-0">
-                                    <p className="text-white font-medium truncate">Instagram Video</p>
-                                    <p className="text-gray-400 text-sm truncate">{url}</p>
-                                </div>
+                        {/* Thumbnail Preview */}
+                        {mediaData.thumbnailUrl && (
+                            <div className="mb-4 rounded-xl overflow-hidden bg-gray-800">
+                                <img
+                                    src={mediaData.thumbnailUrl}
+                                    alt="Media preview"
+                                    className="w-full h-48 object-cover"
+                                    onError={(e) => {
+                                        (e.target as HTMLImageElement).style.display = 'none';
+                                    }}
+                                />
+                            </div>
+                        )}
+
+                        {/* Media Info */}
+                        <div className="mb-4 p-4 rounded-xl bg-gray-800/50 flex items-center gap-3">
+                            <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 flex items-center justify-center flex-shrink-0">
+                                {mediaData.isVideo ? (
+                                    <Video className="w-6 h-6 text-white" />
+                                ) : (
+                                    <ImageIcon className="w-6 h-6 text-white" />
+                                )}
+                            </div>
+                            <div>
+                                <p className="text-white font-medium capitalize">
+                                    Instagram {mediaData.type}
+                                </p>
+                                <p className="text-gray-400 text-sm">
+                                    {mediaData.isVideo ? 'MP4 Video' : 'JPG Image'} • Ready to download
+                                </p>
                             </div>
                         </div>
 
-                        {/* Download Buttons */}
-                        <div className="space-y-3">
-                            <motion.button
-                                onClick={handleDownload}
-                                whileHover={{ scale: 1.02 }}
-                                whileTap={{ scale: 0.98 }}
-                                className="w-full py-4 px-6 rounded-xl bg-gradient-to-r from-purple-600 via-pink-500 to-orange-400 text-white font-semibold flex items-center justify-center gap-2"
-                            >
-                                <Download className="w-5 h-5" />
-                                Download Video (HD)
-                            </motion.button>
+                        {/* Download Button */}
+                        <motion.button
+                            onClick={handleDownload}
+                            disabled={downloading}
+                            whileHover={{ scale: downloading ? 1 : 1.02 }}
+                            whileTap={{ scale: downloading ? 1 : 0.98 }}
+                            className="w-full py-4 px-6 rounded-xl bg-gradient-to-r from-purple-600 via-pink-500 to-orange-400 text-white font-semibold flex items-center justify-center gap-3 disabled:opacity-70"
+                        >
+                            {downloading ? (
+                                <>
+                                    <Loader2 className="w-6 h-6 animate-spin" />
+                                    <span>Downloading...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Download className="w-6 h-6" />
+                                    <span>Download {mediaData.isVideo ? 'Video' : 'Image'}</span>
+                                </>
+                            )}
+                        </motion.button>
 
-                            <motion.button
-                                onClick={handleAlternativeDownload}
-                                whileHover={{ scale: 1.02 }}
-                                whileTap={{ scale: 0.98 }}
-                                className="w-full py-3 px-6 rounded-xl bg-gray-700/50 text-white flex items-center justify-center gap-2 hover:bg-gray-700"
-                            >
-                                <ExternalLink className="w-5 h-5" />
-                                Alternative Download
-                            </motion.button>
-
-                            <motion.button
-                                onClick={copyToClipboard}
-                                whileHover={{ scale: 1.02 }}
-                                whileTap={{ scale: 0.98 }}
-                                className="w-full py-3 px-6 rounded-xl bg-gray-800/50 text-gray-300 flex items-center justify-center gap-2 hover:bg-gray-700/50"
-                            >
-                                {copied ? <CheckCircle2 className="w-5 h-5 text-green-400" /> : <Copy className="w-5 h-5" />}
-                                {copied ? "Copied!" : "Copy URL"}
-                            </motion.button>
-                        </div>
-
-                        {/* Instructions */}
-                        <div className="mt-4 p-3 rounded-lg bg-gray-800/30 border border-gray-700/50">
-                            <p className="text-gray-400 text-xs text-center">
-                                💡 Tip: A new page will open. Click the download button there to save your video.
-                            </p>
-                        </div>
+                        {/* Success message */}
+                        <p className="mt-3 text-gray-500 text-xs text-center">
+                            ✨ Your download will start automatically
+                        </p>
                     </motion.div>
                 )}
             </AnimatePresence>
